@@ -1,0 +1,32 @@
+# Dependencies and build output
+node_modules/
+dist/
+target/
+coverage/
+*.tsbuildinfo
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Private data and runtime state
+.local/
+data/private/
+workspaces/
+*.log
+
+# Editor and operating system state
+.DS_Store
+.idea/
+.vscode/
+
+# Browser test output and runtime databases
+test-results/
+playwright-report/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*

@@ -1,0 +1,47 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { get } from 'node:http';
+import { once } from 'node:events';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { createApp } from '../src/server/app';
+import { KnowledgeStore } from '../src/server/knowledge';
+import { Maintenance } from '../src/server/maintenance';
+import { SourceStore } from '../src/server/store';
+test('HTTP import, duplicate, read, origin protection, and restart persistence', async t => {
+ const root = await realpath(await mkdtemp(path.join(tmpdir(), 'loomwiki-http-')));
+ const server = createApp(new SourceStore(root), path.resolve('dist'));
+ server.listen(0, '127.0.0.1'); await once(server, 'listening');
+ t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(root, { recursive:true, force:true }); });
+ const url = `http://127.0.0.1:${(server.address() as { port:number }).port}`;
+ const options = { method:'POST', headers:{'Content-Type':'application/octet-stream','X-Filename':'policy.md'}, body:'# Policy\r\n30 days' };
+ const response = await fetch(url + '/api/sources', options); assert.equal(response.status, 201);
+ const source = await response.json();
+ assert.equal((await (await fetch(url + '/api/sources', options)).json()).id, source.id);
+ assert.equal((await (await fetch(url + '/api/sources/' + source.id)).json()).text, options.body);
+ assert.equal((await new SourceStore(root).list()).length, 1);
+ assert.equal((await fetch(url + '/api/sources', {...options, headers:{...options.headers, Origin:'https://example.com'}})).status, 403);
+ assert.equal(await new Promise<number>(resolve => { get(url + '/api/sources', {headers:{Host:'evil.example'}}, response => { response.resume(); resolve(response.statusCode!); }); }), 403);
+ assert.equal((await fetch(url + '/api/sources/invalid')).status, 400);
+ assert.equal((await fetch(url + '/missing')).status, 404);
+});
+
+test('knowledge API creates, accepts, and reads revision history without model-side writes', async t => {
+ const root=await realpath(await mkdtemp(path.join(tmpdir(),'loomwiki-review-http-')));
+ const sources=new SourceStore(path.join(root,'sources'));
+ const knowledge=new KnowledgeStore(path.join(root,'knowledge.sqlite'));
+ const maintenance=new Maintenance(knowledge,sources,{label:'test-only',destination:'test://fixture',suggest:async source=>({targetPageId:null,title:'Policy',summary:'New page',claims:[{text:'30 days',citations:[{sourceId:source.id,quote:'30 days'}]}],conflicts:[]})});
+ const server=createApp(sources,path.resolve('dist'),maintenance);
+ server.listen(0,'127.0.0.1'); await once(server,'listening');
+ t.after(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));knowledge.close();await rm(root,{recursive:true,force:true});});
+ const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
+ const source=await sources.import('a.md',Buffer.from('30 days'));
+ const suggested=await fetch(base+'/api/process/'+source.id,{method:'POST'}); assert.equal(suggested.status,201);
+ const proposal=await suggested.json();
+ assert.equal((await (await fetch(base+'/api/workspace')).json()).pages.length,0);
+ const invalid=await fetch(base+'/api/review/'+proposal.id,{method:'POST',headers:{'Content-Type':'application/json'},body:'null'});assert.equal(invalid.status,400);
+ const reviewed=await fetch(base+'/api/review/'+proposal.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'accept',note:'checked'})});assert.equal(reviewed.status,200);
+ const workspace=await (await fetch(base+'/api/workspace')).json();assert.equal(workspace.pages.length,1);
+ assert.equal((await (await fetch(base+'/api/history/'+workspace.pages[0].id)).json())[0].reviewNote,'checked');
+});

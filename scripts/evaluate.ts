@@ -1,0 +1,37 @@
+import { loadEnvFile } from 'node:process';
+import { existsSync } from 'node:fs';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { SourceStore } from '../src/server/store';
+import { KnowledgeStore } from '../src/server/knowledge';
+import { Maintenance } from '../src/server/maintenance';
+import { configuredMaintainer } from '../src/server/provider';
+if (process.env.LOOMWIKI_LIVE_EVAL !== '1') throw new Error('Set LOOMWIKI_LIVE_EVAL=1 to explicitly enable two paid model requests using synthetic data.');
+if (existsSync('.env')) loadEnvFile('.env');
+const provider = configuredMaintainer();
+if (!provider) throw new Error('Configure the backend model key before live evaluation.');
+const root = await realpath(await mkdtemp(path.join(tmpdir(), 'loomwiki-evaluation-')));
+const sources = new SourceStore(path.join(root,'sources'));
+const knowledge = new KnowledgeStore(path.join(root,'knowledge.sqlite'));
+const service = new Maintenance(knowledge,sources,provider);
+try {
+ const first = await sources.import('birch-a.md',Buffer.from('# Project Birch audit retention\n\nSynthetic policy memo, effective January 1 through December 31, 2026. Project Birch retains audit logs for 30 days. This policy applies to all audit logs in Project Birch.'));
+ const draft = await service.process(first.id);
+ assert.equal(draft.targetPageId,null,'The first proposal must create a new page.');
+ assert.equal(knowledge.pages().length,0);
+ await service.review(draft.id,'accept','Synthetic evaluation: verified the quoted retention statement.');
+ const page = knowledge.pages()[0];
+ console.log('PASS: live source-to-proposal, exact citations, review gate, page creation.');
+ const second = await sources.import('birch-b.md',Buffer.from('# Project Birch audit retention\n\nSynthetic policy memo, effective January 1 through December 31, 2026. Project Birch retains audit logs for 90 days. This policy applies to all audit logs in Project Birch. The memo does not state that it supersedes another policy.'));
+ const update = await service.process(second.id);
+ assert.equal(update.targetPageId,page.id,'The second proposal must target the existing page.');
+ assert.ok(update.conflicts.length>0,'The overlapping policies should be flagged for review.');
+ assert.equal(knowledge.pages()[0].revision,1);
+ await service.review(update.id,'accept','Synthetic evaluation: retain both contradictory policies as unresolved pending clarification.');
+ assert.equal(knowledge.pages().length,1); assert.equal(knowledge.pages()[0].revision,2);
+ assert.equal(knowledge.history(page.id).length,2);
+ console.log('PASS: live same-page update, conflict evidence, acceptance, two retained revisions.');
+ console.log('Two live requests completed. This small synthetic evaluation does not establish general model accuracy.');
+} finally { knowledge.close(); await rm(root,{recursive:true,force:true}); }

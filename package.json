@@ -1,0 +1,36 @@
+{
+  "name": "loomwiki",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsx scripts/build.ts",
+    "dev": "pnpm build && tsx src/server/main.ts",
+    "start": "tsx src/server/main.ts",
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "test:browser": "pnpm build && playwright test",
+    "release:check": "tsx scripts/check-release.ts"
+  },
+  "dependencies": {
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^22.19.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "esbuild": "^0.25.12",
+    "jsdom": "^26.1.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "packageManager": "pnpm@10.12.2",
+  "license": "MIT"
+}
